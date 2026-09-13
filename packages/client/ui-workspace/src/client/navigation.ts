@@ -90,20 +90,24 @@ export class DirectoryBrowseError extends Error {
 class UiWorkspaceService extends Service implements UiWorkspace {
   private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
   private readonly lifetime = new AbortController()
+  private readonly initialSessionSelector: SessionId | null | undefined
 
   /**
    * @param ctx - Client root Context.
    * @param directoryPicker - the directory-picking Remote namespace.
    * @param workspaces - pure Workspace Controller.
    * @param sessions - pure Session Controller.
+   * @param initialSearch - initial browser query used for exact Session selection.
    */
   constructor(
     ctx: Context,
     private readonly directoryPicker: ClientRemote['directoryPicker'],
     private readonly workspaces: IWorkspaces,
     private readonly sessions: ISessions,
+    initialSearch = globalThis.location?.search ?? '',
   ) {
     super(ctx, 'uiWorkspace')
+    this.initialSessionSelector = readSessionSelector(initialSearch)
     ctx.effect(() => this.watchNavigation(), 'ui-workspace: Workspace navigation policy')
   }
 
@@ -203,6 +207,18 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       const workspace = this.workspaces.list.getSnapshot()
       const sessions = this.sessions.list.getSnapshot()
       if (workspace.phase !== 'ready' || sessions.phase !== 'ready') return
+      if (this.initialSessionSelector !== undefined) {
+        initial = 'done'
+        const selected = this.initialSessionSelector
+        if (selected !== null && sessions.byId[selected] !== undefined
+          && !workspace.archivedSessionIds.includes(selected)) {
+          this.openSession(selected)
+        } else {
+          this.sessions.clear()
+          this.ctx.layout.selectPanel(null)
+        }
+        return
+      }
       if (sessions.current !== undefined) {
         initial = 'done'
         return
@@ -247,6 +263,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     return true
   }
 
+}
+
+/** `undefined` means absent; `null` means present but invalid. */
+function readSessionSelector(search: string): SessionId | null | undefined {
+  const values = new URLSearchParams(search).getAll('sessionId')
+  if (values.length === 0) return undefined
+  if (values.length !== 1 || values[0] === undefined || values[0].trim() === '') return null
+  return values[0] as SessionId
 }
 
 /** Stable tie-breaking follows Host Workspace order. */

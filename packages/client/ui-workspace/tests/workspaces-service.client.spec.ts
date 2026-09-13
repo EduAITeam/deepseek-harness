@@ -188,6 +188,7 @@ class FakeDirectoryPicker {
 interface BenchOptions {
   readonly workspaces?: WorkspaceSnapshot
   readonly sessions?: SessionListState
+  readonly search?: string
 }
 
 function bench(options: BenchOptions = {}) {
@@ -208,6 +209,7 @@ function bench(options: BenchOptions = {}) {
     directoryPicker.remote,
     workspaces,
     sessions as unknown as ISessions,
+    options.search ?? '',
   )
   return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel }
 }
@@ -218,6 +220,46 @@ async function flush(): Promise<void> {
 }
 
 describe('UiWorkspaceService', () => {
+  it('opens the exact existing Session selected by the initial query', () => {
+    const selected = summary('selected')
+    const other = summary('other')
+    const b = bench({
+      search: '?sessionId=selected',
+      sessions: sessionState([other, selected], other.id),
+      workspaces: workspaceState([workspace('one', [other.id, selected.id])]),
+    })
+
+    expect(b.sessions.open).toHaveBeenCalledExactlyOnceWith(selected.id)
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(b.sessions.list.getSnapshot().current).toBe(selected.id)
+  })
+
+  it('clears selection without creating or falling back for an invalid initial query', () => {
+    const current = summary('current')
+    const b = bench({
+      search: '?sessionId=unknown',
+      sessions: sessionState([current], current.id),
+      workspaces: workspaceState([workspace('one', [current.id])]),
+    })
+
+    expect(b.sessions.open).not.toHaveBeenCalled()
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(b.sessions.clear).toHaveBeenCalledExactlyOnceWith()
+    expect(b.sessions.list.getSnapshot().current).toBeUndefined()
+  })
+
+  it('preserves automatic startup selection when the initial query has no selector', async () => {
+    const b = bench({
+      search: '?token=host-auth',
+      sessions: sessionState(),
+      workspaces: workspaceState([workspace('recent')]),
+    })
+
+    await vi.waitFor(() => {
+      expect(b.sessions.open).toHaveBeenCalledWith(sid('created-recent'))
+    })
+  })
+
   it('selects a Session before revealing its Conversation, including the current Session', () => {
     const current = sid('current')
     const b = bench({ sessions: sessionState([summary('current')], current) })

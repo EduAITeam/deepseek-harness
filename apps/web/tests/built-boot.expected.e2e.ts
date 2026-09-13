@@ -56,6 +56,15 @@ function clientBuildValue(name: string): string | undefined {
   return value
 }
 
+it('opens a selector-owned existing session through the shipped Web composition', async () => {
+  mountAssembledApp('?fixture&sessionId=fx-alpha')
+
+  await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
+  await waitFor(() => {
+    expect(document.querySelector('[data-sample="bash"]')).not.toBeNull()
+  }, { timeout: 10_000 })
+})
+
 it('boots the built plugin graph and renders a fixture session end to end', async () => {
   mountAssembledApp()
 
