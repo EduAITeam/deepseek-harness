@@ -37,6 +37,9 @@ describe('EduAI operator browser route', () => {
     expect(fetch).toHaveBeenCalledOnce()
     const [path, options] = fetch.mock.calls[0] as unknown as [string, RequestInit]
     expect(path).toBe('/api/eduai/operator-message')
+    const headers = new Headers(options.headers)
+    expect(headers.get('X-EduAI-Operator-Capability')).toBe('capability')
+    expect(headers.has('authorization')).toBe(false)
     expect(JSON.parse(options.body as string)).toEqual({ taskId: 42, message: 'Apply the corrected rubric.' })
     expect(nativeSend).not.toHaveBeenCalled()
   })

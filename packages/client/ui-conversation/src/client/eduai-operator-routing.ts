@@ -32,7 +32,7 @@ export class EduAiOperatorRoute {
     try {
       const response = await this.sendFetch('/api/eduai/operator-message', {
         method: 'POST',
-        headers: { authorization: `Bearer ${this.capability}`, 'content-type': 'application/json' },
+        headers: { 'X-EduAI-Operator-Capability': this.capability, 'content-type': 'application/json' },
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
