@@ -12,6 +12,14 @@ import type {
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 
+const EDUAI_OPERATOR_ROUTE_KEY = Symbol.for('eduai.operator-route')
+
+interface CapturedEduAiOperatorRoute {
+  taskId: number
+  sessionId: SessionId
+  capability: string | undefined
+}
+
 /** Workspace archive and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
   /**
@@ -107,6 +115,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     initialSearch = globalThis.location?.search ?? '',
   ) {
     super(ctx, 'uiWorkspace')
+    captureEduAiOperatorRoute()
     this.initialSessionSelector = readSessionSelector(initialSearch)
     ctx.effect(() => this.watchNavigation(), 'ui-workspace: Workspace navigation policy')
   }
@@ -263,6 +272,30 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     return true
   }
 
+}
+
+/** Capture the EduAI fragment before navigation consumers can clean the URL. */
+export function captureEduAiOperatorRoute(
+  location: Location | undefined = globalThis.location,
+  history: History | undefined = globalThis.history,
+): void {
+  if (location === undefined) return
+  const query = new URLSearchParams(location.search)
+  const taskId = query.get('eduaiTaskId')
+  const sessionId = query.get('sessionId')
+  if (taskId === null) return
+
+  const fragment = new URLSearchParams(location.hash.replace(/^#/u, ''))
+  const capability = fragment.get('eduaiCapability') || undefined
+  history?.replaceState(history.state, '', `${location.pathname}${location.search}`)
+
+  if (!sessionId || !/^\d+$/u.test(taskId)
+    || !Number.isSafeInteger(Number(taskId)) || Number(taskId) <= 0) return
+  Reflect.set(globalThis, EDUAI_OPERATOR_ROUTE_KEY, {
+    taskId: Number(taskId),
+    sessionId: sessionId as SessionId,
+    capability,
+  } satisfies CapturedEduAiOperatorRoute)
 }
 
 /** `undefined` means absent; `null` means present but invalid. */

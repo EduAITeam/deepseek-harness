@@ -1,7 +1,13 @@
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SubmitOutcome } from './contract/input.ts'
 
-const CAPABILITY_FRAGMENT_KEY = 'eduaiCapability'
+const EDUAI_OPERATOR_ROUTE_KEY = Symbol.for('eduai.operator-route')
+
+interface CapturedEduAiOperatorRoute {
+  taskId: number
+  sessionId: SessionId
+  capability: string | undefined
+}
 
 /** Browser-only, in-memory route for the EduAI deep-link capability. */
 export class EduAiOperatorRoute {
@@ -12,18 +18,11 @@ export class EduAiOperatorRoute {
     private readonly sendFetch: typeof fetch,
   ) {}
 
-  static fromLocation(location: Location | undefined = globalThis.location, history: History | undefined = globalThis.history,
-    sendFetch: typeof fetch = globalThis.fetch): EduAiOperatorRoute | undefined {
-    if (location === undefined || history === undefined) return undefined
-    const query = new URLSearchParams(location.search)
-    const taskId = query.get('eduaiTaskId')
-    const sessionId = query.get('sessionId')
-    if (!taskId || !sessionId || !/^\d+$/u.test(taskId) || !Number.isSafeInteger(Number(taskId)) || Number(taskId) <= 0) return undefined
-    const fragment = new URLSearchParams(location.hash.replace(/^#/u, ''))
-    const capability = fragment.get(CAPABILITY_FRAGMENT_KEY) || undefined
-    // Remove it even when malformed/missing: a marked EduAI session must never fall back to native prompt.
-    history.replaceState(history.state, '', `${location.pathname}${location.search}`)
-    return new EduAiOperatorRoute(Number(taskId), sessionId as SessionId, capability, sendFetch)
+  static fromLocation(sendFetch: typeof fetch = globalThis.fetch): EduAiOperatorRoute | undefined {
+    const captured = Reflect.get(globalThis, EDUAI_OPERATOR_ROUTE_KEY) as CapturedEduAiOperatorRoute | undefined
+    if (captured === undefined) return undefined
+    Reflect.deleteProperty(globalThis, EDUAI_OPERATOR_ROUTE_KEY)
+    return new EduAiOperatorRoute(captured.taskId, captured.sessionId, captured.capability, sendFetch)
   }
 
   appliesTo(sessionId: SessionId): boolean { return sessionId === this.sessionId }
