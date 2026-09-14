@@ -15,7 +15,9 @@ type TestableInputHub = {
 
 describe('EduAI operator browser route', () => {
   it('captures an EduAI deep link before URL cleanup and routes the later InputHub through EduAI', async () => {
-    const fetch = vi.fn(async () => new Response(null, { status: 202 }))
+    const fetch = vi.fn(async () => Response.json({
+      run: { status: 'needs_human_review', result: { summary: 'Corrected rubric is ready.' }, error: null },
+    }, { status: 202 }))
     const replaceState = vi.fn()
     captureEduAiOperatorRoute(
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
@@ -32,7 +34,7 @@ describe('EduAI operator browser route', () => {
       new AbortController().signal,
     )
 
-    expect(result).toEqual({ kind: 'success' })
+    expect(result).toEqual({ kind: 'success', text: 'EduAI\nCorrected rubric is ready.\nStatus: needs_human_review' })
     expect(replaceState).toHaveBeenCalledExactlyOnceWith(null, '', '/?sessionId=hss_owned&eduaiTaskId=42')
     expect(fetch).toHaveBeenCalledOnce()
     const [path, options] = fetch.mock.calls[0] as unknown as [string, RequestInit]
@@ -63,13 +65,53 @@ describe('EduAI operator browser route', () => {
     expect(nativeSend).not.toHaveBeenCalled()
   })
 
+  it('fails closed without native prompting when the EduAI request rejects', async () => {
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const fetch = vi.fn(async () => { throw new TypeError('network failure') })
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const nativeSend = vi.fn()
+    const hub = new InputHub({ get: () => ({ sendSession: nativeSend }) } as never, (() => '') as never, route)
+
+    const result = await (hub as unknown as TestableInputHub).sink(
+      { sessionId: 'hss_owned' }, 'Fix it.', [], 'queue', new AbortController().signal,
+    )
+
+    expect(result.kind).toBe('error')
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(nativeSend).not.toHaveBeenCalled()
+  })
+
+  it('treats a terminal workflow failure as an EduAI failure without native prompting', async () => {
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(vi.fn(async () => Response.json({
+      run: { status: 'failed', result: null, error: 'executor_failed' },
+    }, { status: 422 })))!
+    const nativeSend = vi.fn()
+    const hub = new InputHub({ get: () => ({ sendSession: nativeSend }) } as never, (() => '') as never, route)
+
+    const result = await (hub as unknown as TestableInputHub).sink(
+      { sessionId: 'hss_owned' }, 'Fix it.', [], 'queue', new AbortController().signal,
+    )
+
+    expect(result).toEqual({ kind: 'error', text: 'EduAI operator message was not accepted.' })
+    expect(nativeSend).not.toHaveBeenCalled()
+  })
+
   it('calls the browser fetch with the browser global as its receiver', async () => {
     const originalFetch = globalThis.fetch
     const received = vi.fn()
     globalThis.fetch = function (this: unknown): Promise<Response> {
       received(this)
       if (this !== globalThis) throw new TypeError('invalid fetch receiver')
-      return Promise.resolve(new Response(null, { status: 202 }))
+      return Promise.resolve(Response.json({
+        run: { status: 'completed', result: { summary: 'Done.' }, error: null },
+      }, { status: 202 }))
     }
     try {
       captureEduAiOperatorRoute(
@@ -78,7 +120,7 @@ describe('EduAI operator browser route', () => {
       )
       const outcome = await EduAiOperatorRoute.fromLocation()!.send('Apply the corrected rubric.', new AbortController().signal)
 
-      expect(outcome).toEqual({ kind: 'success' })
+      expect(outcome).toEqual({ kind: 'success', text: 'EduAI\nDone.\nStatus: completed' })
       expect(received).toHaveBeenCalledWith(globalThis)
     } finally {
       globalThis.fetch = originalFetch

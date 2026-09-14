@@ -9,6 +9,12 @@ interface CapturedEduAiOperatorRoute {
   capability: string | undefined
 }
 
+interface EduAiRunSnapshot {
+  status?: unknown
+  result?: { summary?: unknown } | null
+  error?: unknown
+}
+
 /** Browser-only, in-memory route for the EduAI deep-link capability. */
 export class EduAiOperatorRoute {
   private constructor(
@@ -36,9 +42,14 @@ export class EduAiOperatorRoute {
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
-      return response.ok
-        ? { kind: 'success' }
-        : { kind: 'error', text: 'EduAI operator message was not accepted.' }
+      if (!response.ok) return { kind: 'error', text: 'EduAI operator message was not accepted.' }
+      const payload = await response.json() as { run?: EduAiRunSnapshot }
+      if (payload.run === undefined || typeof payload.run.status !== 'string') {
+        return { kind: 'error', text: 'EduAI operator run status was unavailable.' }
+      }
+      const summary = typeof payload.run.result?.summary === 'string' ? payload.run.result.summary : undefined
+      const detail = summary ?? (typeof payload.run.error === 'string' ? payload.run.error : 'No result was returned.')
+      return { kind: 'success', text: `EduAI\n${detail}\nStatus: ${payload.run.status}` }
     } catch {
       return { kind: 'error', text: 'EduAI operator message could not be delivered.' }
     }
