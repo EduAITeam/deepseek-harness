@@ -14,6 +14,43 @@ type TestableInputHub = {
 }
 
 describe('EduAI operator browser route', () => {
+  it('coalesces duplicate textbox dispatches into one operator-message POST', async () => {
+    let resolveResponse!: (response: Response) => void
+    const fetch = vi.fn(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+
+    const first = route.send('Submit once.', new AbortController().signal)
+    const duplicate = route.send('Submit once.', new AbortController().signal)
+    expect(fetch).toHaveBeenCalledOnce()
+
+    resolveResponse(Response.json({
+      run: { status: 'needs_human_review', result: { summary: 'Ready for review.' }, error: null },
+    }, { status: 202 }))
+
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { kind: 'success', text: 'EduAI\nReady for review.\nStatus: needs_human_review' },
+      { kind: 'success', text: 'EduAI\nReady for review.\nStatus: needs_human_review' },
+    ])
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('does not retry an initial operator-message failure', async () => {
+    const fetch = vi.fn(async () => Response.json({ error: 'conflict' }, { status: 409 }))
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+
+    const outcome = await EduAiOperatorRoute.fromLocation(fetch)!.send('Submit once.', new AbortController().signal)
+
+    expect(outcome).toEqual({ kind: 'error', text: 'EduAI operator message was not accepted.' })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
     const originalFetch = globalThis.fetch
     const fetch = vi.fn(async () => Response.json({

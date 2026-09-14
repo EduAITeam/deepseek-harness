@@ -17,6 +17,8 @@ interface EduAiRunSnapshot {
 
 /** Browser-only, in-memory route for the EduAI deep-link capability. */
 export class EduAiOperatorRoute {
+  private readonly inFlight = new Map<string, Promise<SubmitOutcome>>()
+
   private constructor(
     private readonly taskId: number,
     private readonly sessionId: SessionId,
@@ -33,12 +35,22 @@ export class EduAiOperatorRoute {
 
   appliesTo(sessionId: SessionId): boolean { return sessionId === this.sessionId }
 
-  async send(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
-    if (!this.capability) return { kind: 'error', text: 'EduAI operator capability is unavailable. Reopen this task from EduAI.' }
+  send(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
+    const capability = this.capability
+    if (!capability) return Promise.resolve({ kind: 'error', text: 'EduAI operator capability is unavailable. Reopen this task from EduAI.' })
+    const existing = this.inFlight.get(text)
+    if (existing !== undefined) return existing
+    const pending = this.sendOnce(text, signal, capability)
+    this.inFlight.set(text, pending)
+    void pending.finally(() => { this.inFlight.delete(text) })
+    return pending
+  }
+
+  private async sendOnce(text: string, signal: AbortSignal, capability: string): Promise<SubmitOutcome> {
     try {
       const response = await this.sendFetch('/api/eduai/operator-message', {
         method: 'POST',
-        headers: { 'X-EduAI-Operator-Capability': this.capability, 'content-type': 'application/json' },
+        headers: { 'X-EduAI-Operator-Capability': capability, 'content-type': 'application/json' },
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
