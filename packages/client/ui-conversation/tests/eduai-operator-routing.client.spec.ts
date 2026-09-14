@@ -14,6 +14,32 @@ type TestableInputHub = {
 }
 
 describe('EduAI operator browser route', () => {
+  it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
+    const originalFetch = globalThis.fetch
+    const fetch = vi.fn(async () => Response.json({
+      run: { status: 'needs_human_review', result: { summary: 'Late capture was delivered.' }, error: null },
+    }, { status: 202 }))
+    globalThis.fetch = fetch
+    try {
+      const nativeSend = vi.fn()
+      const hub = new InputHub({ get: () => ({ sendSession: nativeSend }) } as never, (() => '') as never)
+
+      captureEduAiOperatorRoute(
+        { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+        { state: null, replaceState: vi.fn() } as unknown as History,
+      )
+      const result = await (hub as unknown as TestableInputHub).sink(
+        { sessionId: 'hss_owned' }, 'Submit through the textbox.', [], 'queue', new AbortController().signal,
+      )
+
+      expect(result).toEqual({ kind: 'success', text: 'EduAI\nLate capture was delivered.\nStatus: needs_human_review' })
+      expect(fetch).toHaveBeenCalledOnce()
+      expect(nativeSend).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('captures an EduAI deep link before URL cleanup and routes the later InputHub through EduAI', async () => {
     const fetch = vi.fn(async () => Response.json({
       run: { status: 'needs_human_review', result: { summary: 'Corrected rubric is ready.' }, error: null },

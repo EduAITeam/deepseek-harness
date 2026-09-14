@@ -50,6 +50,7 @@ interface ConversationAttachmentFace {
 /** Session-addressed input facade registry (SessionInputResolver face + composer-layer extras). */
 export class InputHub implements SessionInputResolver {
   private readonly shells = new Map<SessionId, SessionInputShell>()
+  private eduAiRoute: EduAiOperatorRoute | undefined
 
   /**
    * @param ctx - client root context (services resolved lazily per call — boot order stays free).
@@ -58,8 +59,10 @@ export class InputHub implements SessionInputResolver {
   constructor(
     private readonly rootCtx: Context,
     private readonly t: TranslateNS<'conversation'>,
-    private readonly eduAiRoute = EduAiOperatorRoute.fromLocation(),
-  ) {}
+    eduAiRoute?: EduAiOperatorRoute,
+  ) {
+    this.eduAiRoute = eduAiRoute
+  }
 
   /**
    * Resolve the facade for one session-scope ctx (SessionInputResolver face).
@@ -183,11 +186,13 @@ export class InputHub implements SessionInputResolver {
     signal: AbortSignal,
   ): Promise<SubmitOutcome> {
     if (text === '' && attachmentIds.length === 0) return Promise.resolve({ kind: 'success' })
-    if (this.eduAiRoute?.appliesTo(session.sessionId)) {
+    const eduAiRoute = this.eduAiRoute ?? EduAiOperatorRoute.fromLocation()
+    if (eduAiRoute !== undefined) this.eduAiRoute = eduAiRoute
+    if (eduAiRoute?.appliesTo(session.sessionId)) {
       if (attachmentIds.length > 0) {
         return Promise.resolve({ kind: 'error', text: 'EduAI operator messages do not support attachments.' })
       }
-      return this.eduAiRoute.send(text, signal)
+      return eduAiRoute.send(text, signal)
     }
     return this.conversation().sendSession(session, text, attachmentIds, mode, signal)
   }
