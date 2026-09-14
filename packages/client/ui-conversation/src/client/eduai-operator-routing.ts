@@ -18,7 +18,7 @@ export class EduAiOperatorRoute {
     private readonly sendFetch: typeof fetch,
   ) {}
 
-  static fromLocation(sendFetch: typeof fetch = globalThis.fetch): EduAiOperatorRoute | undefined {
+  static fromLocation(sendFetch: typeof fetch = globalThis.fetch.bind(globalThis)): EduAiOperatorRoute | undefined {
     const captured = Reflect.get(globalThis, EDUAI_OPERATOR_ROUTE_KEY) as CapturedEduAiOperatorRoute | undefined
     if (captured === undefined) return undefined
     Reflect.deleteProperty(globalThis, EDUAI_OPERATOR_ROUTE_KEY)

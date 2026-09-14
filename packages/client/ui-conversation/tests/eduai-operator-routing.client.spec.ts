@@ -63,6 +63,28 @@ describe('EduAI operator browser route', () => {
     expect(nativeSend).not.toHaveBeenCalled()
   })
 
+  it('calls the browser fetch with the browser global as its receiver', async () => {
+    const originalFetch = globalThis.fetch
+    const received = vi.fn()
+    globalThis.fetch = function (this: unknown): Promise<Response> {
+      received(this)
+      if (this !== globalThis) throw new TypeError('invalid fetch receiver')
+      return Promise.resolve(new Response(null, { status: 202 }))
+    }
+    try {
+      captureEduAiOperatorRoute(
+        { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+        { state: null, replaceState: vi.fn() } as unknown as History,
+      )
+      const outcome = await EduAiOperatorRoute.fromLocation()!.send('Apply the corrected rubric.', new AbortController().signal)
+
+      expect(outcome).toEqual({ kind: 'success' })
+      expect(received).toHaveBeenCalledWith(globalThis)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('keeps normal Harness sessions on the native prompt path', async () => {
     const nativeSend = vi.fn(async () => ({ kind: 'success' as const }))
     const hub = new InputHub({ get: () => ({ sendSession: nativeSend }) } as never, (() => '') as never)
