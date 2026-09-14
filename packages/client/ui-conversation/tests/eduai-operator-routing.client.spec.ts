@@ -54,7 +54,10 @@ describe('EduAI operator browser route', () => {
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
     const originalFetch = globalThis.fetch
     const fetch = vi.fn(async () => Response.json({
-      run: { status: 'needs_human_review', result: { summary: 'Late capture was delivered.' }, error: null },
+      run: {
+        runId: 'hrn_5', taskId: '42', sessionId: 'hss_owned',
+        status: 'needs_human_review', result: { summary: 'Late capture was delivered.' }, error: null,
+      },
     }, { status: 202 }))
     globalThis.fetch = fetch
     try {
