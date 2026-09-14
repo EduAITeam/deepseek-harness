@@ -4,8 +4,8 @@
  * materialization (the 'input' standard-kit entry IS the
  * creation trigger) and torn down by the scope disposer (instance-and-scope
  * share one lifecycle). The hub registers the scoped input-mutation
- * listeners on each Session context and owns the default-sink choreography: every session is a
- * real host entity, so the sink is one unconditional prompt path.
+ * listeners on each Session context and owns the default-sink choreography. EduAI-marked
+ * sessions route through their scoped operator bridge; all other real host sessions prompt normally.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
@@ -21,6 +21,7 @@ import type {
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
 import type { PopupDismissFace } from './facade.ts'
 import { SessionInputShell } from './facade.ts'
+import { EduAiOperatorRoute } from '../eduai-operator-routing.ts'
 
 /** Structural command face for per-session popup resolution. */
 interface CommandFace {
@@ -57,6 +58,7 @@ export class InputHub implements SessionInputResolver {
   constructor(
     private readonly rootCtx: Context,
     private readonly t: TranslateNS<'conversation'>,
+    private readonly eduAiRoute = EduAiOperatorRoute.fromLocation(),
   ) {}
 
   /**
@@ -170,10 +172,8 @@ export class InputHub implements SessionInputResolver {
   }
 
   /**
-   * Default sink: optimistic clear + prompt. The session is always a real
-   * host entity (materialized when its workspace was picked), so there is
-   * exactly one path; a failed first prompt is an ordinary prompt failure
-   * (banner via promptError, draft restored only while untouched).
+   * Default sink: a marked EduAI session uses its capability bridge; every
+   * other real host session uses the native prompt path.
    */
   private sink(
     session: SessionFace,
@@ -183,6 +183,12 @@ export class InputHub implements SessionInputResolver {
     signal: AbortSignal,
   ): Promise<SubmitOutcome> {
     if (text === '' && attachmentIds.length === 0) return Promise.resolve({ kind: 'success' })
+    if (this.eduAiRoute?.appliesTo(session.sessionId)) {
+      if (attachmentIds.length > 0) {
+        return Promise.resolve({ kind: 'error', text: 'EduAI operator messages do not support attachments.' })
+      }
+      return this.eduAiRoute.send(text, signal)
+    }
     return this.conversation().sendSession(session, text, attachmentIds, mode, signal)
   }
 
