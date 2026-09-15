@@ -15,9 +15,20 @@ interface EduAiRunSnapshot {
   error?: unknown
 }
 
+export interface EduAiTranscriptEntry {
+  readonly role: 'operator' | 'eduai'
+  readonly text: string
+  readonly pending?: boolean
+}
+
 /** Browser-only, in-memory route for the EduAI deep-link capability. */
 export class EduAiOperatorRoute {
+  private static ownedSessionId: SessionId | undefined
+  private static readonly transcript = new Map<SessionId, readonly EduAiTranscriptEntry[]>()
+  private static readonly listeners = new Map<SessionId, Set<() => void>>()
+  private static readonly processingSessions = new Set<SessionId>()
   private readonly inFlight = new Map<string, Promise<SubmitOutcome>>()
+  private active: Promise<SubmitOutcome> | undefined
 
   private constructor(
     private readonly taskId: number,
@@ -30,17 +41,55 @@ export class EduAiOperatorRoute {
     const captured = Reflect.get(globalThis, EDUAI_OPERATOR_ROUTE_KEY) as CapturedEduAiOperatorRoute | undefined
     if (captured === undefined) return undefined
     Reflect.deleteProperty(globalThis, EDUAI_OPERATOR_ROUTE_KEY)
+    EduAiOperatorRoute.ownedSessionId = captured.sessionId
+    EduAiOperatorRoute.transcript.delete(captured.sessionId)
     return new EduAiOperatorRoute(captured.taskId, captured.sessionId, captured.capability, sendFetch)
   }
 
   appliesTo(sessionId: SessionId): boolean { return sessionId === this.sessionId }
+  static ownsSession(sessionId: SessionId | undefined): boolean {
+    if (sessionId === undefined) return false
+    const captured = Reflect.get(globalThis, EDUAI_OPERATOR_ROUTE_KEY) as CapturedEduAiOperatorRoute | undefined
+    return sessionId === EduAiOperatorRoute.ownedSessionId || sessionId === captured?.sessionId
+  }
+  static isProcessing(sessionId: SessionId | undefined): boolean {
+    return sessionId !== undefined && EduAiOperatorRoute.processingSessions.has(sessionId)
+  }
+  static entries(sessionId: SessionId | undefined): readonly EduAiTranscriptEntry[] {
+    return sessionId === undefined ? [] : EduAiOperatorRoute.transcript.get(sessionId) ?? []
+  }
+  static subscribe(sessionId: SessionId | undefined, listener: () => void): () => void {
+    if (sessionId === undefined) return () => {}
+    const listeners = EduAiOperatorRoute.listeners.get(sessionId) ?? new Set<() => void>()
+    listeners.add(listener)
+    EduAiOperatorRoute.listeners.set(sessionId, listeners)
+    return () => { listeners.delete(listener) }
+  }
+  isProcessing(): boolean { return this.active !== undefined }
 
   send(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
     const existing = this.inFlight.get(text)
     if (existing !== undefined) return existing
+    if (this.active !== undefined) {
+      return Promise.resolve({ kind: 'error', text: 'EduAI is still processing the previous request.' })
+    }
+    EduAiOperatorRoute.append(this.sessionId, { role: 'operator', text })
+    EduAiOperatorRoute.append(this.sessionId, { role: 'eduai', text: 'Processing…', pending: true })
     const pending = this.sendOnce(text, signal)
+    this.active = pending
+    EduAiOperatorRoute.processingSessions.add(this.sessionId)
+    EduAiOperatorRoute.publish(this.sessionId)
     this.inFlight.set(text, pending)
-    void pending.finally(() => { this.inFlight.delete(text) })
+    void pending.then((outcome) => {
+      EduAiOperatorRoute.replacePending(this.sessionId, outcome.text ?? 'EduAI operator message could not be delivered.')
+    }).finally(() => {
+      this.inFlight.delete(text)
+      if (this.active === pending) {
+        this.active = undefined
+        EduAiOperatorRoute.processingSessions.delete(this.sessionId)
+        EduAiOperatorRoute.publish(this.sessionId)
+      }
+    })
     return pending
   }
 
@@ -53,6 +102,7 @@ export class EduAiOperatorRoute {
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
+      if (response.status === 409) return { kind: 'error', text: 'EduAI is still processing the previous request.' }
       if (!response.ok) return { kind: 'error', text: 'EduAI operator message was not accepted.' }
       const payload = await response.json() as { run?: EduAiRunSnapshot }
       if (payload.run === undefined || typeof payload.run.status !== 'string') {
@@ -76,5 +126,22 @@ export class EduAiOperatorRoute {
     if (!response.ok) return false
     this.bootstrapCapability = undefined
     return true
+  }
+
+  private static append(sessionId: SessionId, entry: EduAiTranscriptEntry): void {
+    EduAiOperatorRoute.transcript.set(sessionId, [...EduAiOperatorRoute.entries(sessionId), entry])
+    EduAiOperatorRoute.publish(sessionId)
+  }
+
+  private static replacePending(sessionId: SessionId, text: string): void {
+    const entries = EduAiOperatorRoute.entries(sessionId)
+    const index = entries.findLastIndex(entry => entry.role === 'eduai' && entry.pending === true)
+    if (index < 0) return
+    EduAiOperatorRoute.transcript.set(sessionId, entries.map((entry, entryIndex) => entryIndex === index ? { role: 'eduai', text } : entry))
+    EduAiOperatorRoute.publish(sessionId)
+  }
+
+  private static publish(sessionId: SessionId): void {
+    for (const listener of EduAiOperatorRoute.listeners.get(sessionId) ?? []) listener()
   }
 }

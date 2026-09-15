@@ -13,6 +13,8 @@ type TestableInputHub = {
   ): Promise<{ kind: string }>
 }
 
+type EduAiSessionId = Exclude<Parameters<typeof EduAiOperatorRoute.entries>[0], undefined>
+
 function requestPath(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input
   if (input instanceof URL) return input.toString()
@@ -59,8 +61,54 @@ describe('EduAI operator browser route', () => {
 
     const outcome = await EduAiOperatorRoute.fromLocation(fetch)!.send('Submit once.', new AbortController().signal)
 
-    expect(outcome).toEqual({ kind: 'error', text: 'EduAI operator message was not accepted.' })
+    expect(outcome).toEqual({ kind: 'error', text: 'EduAI is still processing the previous request.' })
     expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('blocks a distinct operator message while the accepted run is active', async () => {
+    let resolveMessage!: (response: Response) => void
+    const fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
+      ? Promise.resolve(Response.json({ established: true }, { status: 201 }))
+      : new Promise<Response>((resolve) => { resolveMessage = resolve }))
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const first = route.send('First request.', new AbortController().signal)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await expect(route.send('Second request.', new AbortController().signal))
+      .resolves.toEqual({ kind: 'error', text: 'EduAI is still processing the previous request.' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    resolveMessage(Response.json({ run: { status: 'needs_human_review', result: { summary: 'Ready.' } } }, { status: 202 }))
+    await expect(first).resolves.toMatchObject({ kind: 'success' })
+  })
+
+  it('shows a local operator transcript and processing state before the terminal result', async () => {
+    let resolveMessage!: (response: Response) => void
+    const fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
+      ? Promise.resolve(Response.json({ established: true }, { status: 201 }))
+      : new Promise<Response>((resolve) => { resolveMessage = resolve }))
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const pending = route.send('Create the console app.', new AbortController().signal)
+    expect(EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)).toEqual([
+      { role: 'operator', text: 'Create the console app.' },
+      { role: 'eduai', text: 'Processing…', pending: true },
+    ])
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    resolveMessage(Response.json({ run: { status: 'completed', result: { summary: 'Done.' } } }, { status: 202 }))
+    await expect(pending).resolves.toEqual({ kind: 'success', text: 'EduAI\nDone.\nStatus: completed' })
+    expect(EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)).toEqual([
+      { role: 'operator', text: 'Create the console app.' },
+      { role: 'eduai', text: 'EduAI\nDone.\nStatus: completed' },
+    ])
   })
 
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {

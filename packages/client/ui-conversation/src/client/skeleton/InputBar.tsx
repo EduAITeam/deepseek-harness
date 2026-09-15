@@ -13,7 +13,7 @@
  * trigger instead of a parallel tree.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
@@ -36,6 +36,7 @@ import { resolveSubmitMode } from '../input/submission-policy.ts'
 import { attachmentErrorText, imageSizeText } from '../image-labels.ts'
 import { ContextMeter } from './ContextMeter.tsx'
 import { PermissionSelect } from './PermissionSelect.tsx'
+import { EduAiOperatorRoute } from '../eduai-operator-routing.ts'
 import css from './InputBar.module.css'
 
 export type InputBarProps = ComposerBarProps
@@ -57,6 +58,13 @@ export const InputBar = memo(function InputBar({
   const promptError = useSession(s => s.promptError) ?? null
   const running = useSession(s => s.running) ?? false
   const subagent = useSession(s => s.subagent) ?? null
+  const eduAiOwned = EduAiOperatorRoute.ownsSession(sessionId)
+  const eduAiProcessing = EduAiOperatorRoute.isProcessing(sessionId)
+  const eduAiTranscript = useSyncExternalStore(
+    listener => EduAiOperatorRoute.subscribe(sessionId, listener),
+    () => EduAiOperatorRoute.entries(sessionId),
+    () => [],
+  )
   const removed = useSession(s => s.removed) ?? false
   // Plan mode swaps the composer placeholder (the projection is the folded
   // host value; owner-prop placeholders — hero, session-unavailable — win).
@@ -125,7 +133,7 @@ export const InputBar = memo(function InputBar({
   // inert no-workspace state, the machine faces absent (no session), or a
   // parent-offline continuable child. An owner block also disables input;
   // adjudicating and submitting render read-only so the draft stays visible.
-  const disabled = removed || inert || !live || blocked !== undefined || parentOffline
+  const disabled = removed || inert || !live || blocked !== undefined || parentOffline || eduAiProcessing
   const locked = disabled
   // The model seat is the ONE control a block leaves live: every block this
   // contract has is cleared by choosing a model, so locking it too would leave
@@ -367,7 +375,7 @@ export const InputBar = memo(function InputBar({
   // The Access seat: the projection-fed permission chip (renders nothing
   // while the permissions key is absent — permission-less host or Draft —
   // or while the command face is absent with the session).
-  const accessSelect: ReactNode = command === undefined
+  const accessSelect: ReactNode = eduAiOwned || command === undefined
     ? null
     : <PermissionSelect key={sessionId} value={permissions} locked={locked} command={command} t={t} />
 
@@ -416,6 +424,11 @@ export const InputBar = memo(function InputBar({
       {notice?.level === 'info' && (
         <div className={css.notice} role="status">
           {notice.text}
+        </div>
+      )}
+      {eduAiOwned && eduAiTranscript.length > 0 && (
+        <div className={css.notice} aria-live="polite">
+          {eduAiTranscript.map((entry, index) => <div key={`${entry.role}-${index}`}><strong>{entry.role === 'operator' ? 'Operator' : 'EduAI'}</strong><br />{entry.text}</div>)}
         </div>
       )}
       {/* Trigger clicks land on the card, not the editor: the toolbar row's
@@ -515,7 +528,7 @@ export const InputBar = memo(function InputBar({
             />
             <div className={css.modes}>
               {accessSelect}
-              {sessionId === undefined ? null : renderSlot('conversation.input.plan', { locked })}
+              {sessionId === undefined || eduAiOwned ? null : renderSlot('conversation.input.plan', { locked })}
             </div>
             {input === undefined || sessionId === undefined
               ? null
@@ -525,7 +538,7 @@ export const InputBar = memo(function InputBar({
             {input === undefined || sessionId === undefined
               ? null
               : renderSlot('conversation.input.right', {})}
-            {sessionId === undefined ? null : renderSlot('conversation.input.model', { locked: modelSeatLocked })}
+            {sessionId === undefined || eduAiOwned ? null : renderSlot('conversation.input.model', { locked: modelSeatLocked })}
             <ContextMeter useProjection={useProjection} t={t} />
             {interruptible && (
               <Tooltip label={t('input.stop')} side="top" delayMs={500} disabled={stop === undefined}>
