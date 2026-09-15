@@ -16,7 +16,9 @@ type TestableInputHub = {
 describe('EduAI operator browser route', () => {
   it('coalesces duplicate textbox dispatches into one operator-message POST', async () => {
     let resolveResponse!: (response: Response) => void
-    const fetch = vi.fn(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
+    const fetch = vi.fn((path: string) => path === '/api/eduai/operator-session'
+      ? Promise.resolve(Response.json({ established: true }, { status: 201 }))
+      : new Promise<Response>((resolve) => { resolveResponse = resolve }))
     captureEduAiOperatorRoute(
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
       { state: null, replaceState: vi.fn() } as unknown as History,
@@ -25,7 +27,10 @@ describe('EduAI operator browser route', () => {
 
     const first = route.send('Submit once.', new AbortController().signal)
     const duplicate = route.send('Submit once.', new AbortController().signal)
-    expect(fetch).toHaveBeenCalledOnce()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledWith('/api/eduai/operator-session', expect.anything())
+    expect(fetch).toHaveBeenCalledWith('/api/eduai/operator-message', expect.anything())
 
     resolveResponse(Response.json({
       run: { status: 'needs_human_review', result: { summary: 'Ready for review.' }, error: null },
@@ -35,11 +40,12 @@ describe('EduAI operator browser route', () => {
       { kind: 'success', text: 'EduAI\nReady for review.\nStatus: needs_human_review' },
       { kind: 'success', text: 'EduAI\nReady for review.\nStatus: needs_human_review' },
     ])
-    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('does not retry an initial operator-message failure', async () => {
-    const fetch = vi.fn(async () => Response.json({ error: 'conflict' }, { status: 409 }))
+    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+      ? Response.json({ established: true }, { status: 201 }) : Response.json({ error: 'conflict' }, { status: 409 }))
     captureEduAiOperatorRoute(
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
       { state: null, replaceState: vi.fn() } as unknown as History,
@@ -48,17 +54,16 @@ describe('EduAI operator browser route', () => {
     const outcome = await EduAiOperatorRoute.fromLocation(fetch)!.send('Submit once.', new AbortController().signal)
 
     expect(outcome).toEqual({ kind: 'error', text: 'EduAI operator message was not accepted.' })
-    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
     const originalFetch = globalThis.fetch
-    const fetch = vi.fn(async () => Response.json({
-      run: {
+    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+      ? Response.json({ established: true }, { status: 201 }) : Response.json({ run: {
         runId: 'hrn_5', taskId: '42', sessionId: 'hss_owned',
         status: 'needs_human_review', result: { summary: 'Late capture was delivered.' }, error: null,
-      },
-    }, { status: 202 }))
+      } }, { status: 202 }))
     globalThis.fetch = fetch
     try {
       const nativeSend = vi.fn()
@@ -73,7 +78,7 @@ describe('EduAI operator browser route', () => {
       )
 
       expect(result).toEqual({ kind: 'success', text: 'EduAI\nLate capture was delivered.\nStatus: needs_human_review' })
-      expect(fetch).toHaveBeenCalledOnce()
+      expect(fetch).toHaveBeenCalledTimes(2)
       expect(nativeSend).not.toHaveBeenCalled()
     } finally {
       globalThis.fetch = originalFetch
@@ -81,9 +86,9 @@ describe('EduAI operator browser route', () => {
   })
 
   it('captures an EduAI deep link before URL cleanup and routes the later InputHub through EduAI', async () => {
-    const fetch = vi.fn(async () => Response.json({
-      run: { status: 'needs_human_review', result: { summary: 'Corrected rubric is ready.' }, error: null },
-    }, { status: 202 }))
+    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+      ? Response.json({ established: true }, { status: 201 })
+      : Response.json({ run: { status: 'needs_human_review', result: { summary: 'Corrected rubric is ready.' }, error: null } }, { status: 202 }))
     const replaceState = vi.fn()
     captureEduAiOperatorRoute(
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
@@ -102,11 +107,14 @@ describe('EduAI operator browser route', () => {
 
     expect(result).toEqual({ kind: 'success', text: 'EduAI\nCorrected rubric is ready.\nStatus: needs_human_review' })
     expect(replaceState).toHaveBeenCalledExactlyOnceWith(null, '', '/?sessionId=hss_owned&eduaiTaskId=42')
-    expect(fetch).toHaveBeenCalledOnce()
-    const [path, options] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const [bootstrapPath, bootstrapOptions] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(bootstrapPath).toBe('/api/eduai/operator-session')
+    expect(new Headers(bootstrapOptions.headers).get('X-EduAI-Operator-Capability')).toBe('capability')
+    const [path, options] = fetch.mock.calls[1] as unknown as [string, RequestInit]
     expect(path).toBe('/api/eduai/operator-message')
     const headers = new Headers(options.headers)
-    expect(headers.get('X-EduAI-Operator-Capability')).toBe('capability')
+    expect(headers.has('X-EduAI-Operator-Capability')).toBe(false)
     expect(headers.has('authorization')).toBe(false)
     expect(JSON.parse(options.body as string)).toEqual({ taskId: 42, message: 'Apply the corrected rubric.' })
     expect(nativeSend).not.toHaveBeenCalled()
@@ -155,9 +163,9 @@ describe('EduAI operator browser route', () => {
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
       { state: null, replaceState: vi.fn() } as unknown as History,
     )
-    const route = EduAiOperatorRoute.fromLocation(vi.fn(async () => Response.json({
-      run: { status: 'failed', result: null, error: 'executor_failed' },
-    }, { status: 422 })))!
+    const route = EduAiOperatorRoute.fromLocation(vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+      ? Response.json({ established: true }, { status: 201 })
+      : Response.json({ run: { status: 'failed', result: null, error: 'executor_failed' } }, { status: 422 })))!
     const nativeSend = vi.fn()
     const hub = new InputHub({ get: () => ({ sendSession: nativeSend }) } as never, (() => '') as never, route)
 
@@ -172,10 +180,10 @@ describe('EduAI operator browser route', () => {
   it('calls the browser fetch with the browser global as its receiver', async () => {
     const originalFetch = globalThis.fetch
     const received = vi.fn()
-    globalThis.fetch = function (this: unknown): Promise<Response> {
+    globalThis.fetch = function (this: unknown, path: string): Promise<Response> {
       received(this)
       if (this !== globalThis) throw new TypeError('invalid fetch receiver')
-      return Promise.resolve(Response.json({
+      return Promise.resolve(path === '/api/eduai/operator-session' ? Response.json({ established: true }, { status: 201 }) : Response.json({
         run: { status: 'completed', result: { summary: 'Done.' }, error: null },
       }, { status: 202 }))
     }

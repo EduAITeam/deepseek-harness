@@ -22,7 +22,7 @@ export class EduAiOperatorRoute {
   private constructor(
     private readonly taskId: number,
     private readonly sessionId: SessionId,
-    private readonly capability: string | undefined,
+    private bootstrapCapability: string | undefined,
     private readonly sendFetch: typeof fetch,
   ) {}
 
@@ -36,21 +36,20 @@ export class EduAiOperatorRoute {
   appliesTo(sessionId: SessionId): boolean { return sessionId === this.sessionId }
 
   send(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
-    const capability = this.capability
-    if (!capability) return Promise.resolve({ kind: 'error', text: 'EduAI operator capability is unavailable. Reopen this task from EduAI.' })
     const existing = this.inFlight.get(text)
     if (existing !== undefined) return existing
-    const pending = this.sendOnce(text, signal, capability)
+    const pending = this.sendOnce(text, signal)
     this.inFlight.set(text, pending)
     void pending.finally(() => { this.inFlight.delete(text) })
     return pending
   }
 
-  private async sendOnce(text: string, signal: AbortSignal, capability: string): Promise<SubmitOutcome> {
+  private async sendOnce(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
     try {
+      if (!(await this.establishSession(signal))) return { kind: 'error', text: 'EduAI operator capability is unavailable. Reopen this task from EduAI.' }
       const response = await this.sendFetch('/api/eduai/operator-message', {
         method: 'POST',
-        headers: { 'X-EduAI-Operator-Capability': capability, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
@@ -65,5 +64,17 @@ export class EduAiOperatorRoute {
     } catch {
       return { kind: 'error', text: 'EduAI operator message could not be delivered.' }
     }
+  }
+
+  private async establishSession(signal: AbortSignal): Promise<boolean> {
+    const bootstrap = this.bootstrapCapability
+    if (bootstrap === undefined) return true
+    const response = await this.sendFetch('/api/eduai/operator-session', {
+      method: 'POST', headers: { 'X-EduAI-Operator-Capability': bootstrap, 'content-type': 'application/json' },
+      body: JSON.stringify({ taskId: this.taskId }), signal,
+    })
+    if (!response.ok) return false
+    this.bootstrapCapability = undefined
+    return true
   }
 }
