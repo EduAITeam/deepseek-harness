@@ -1,0 +1,44 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(var(--dsh-composer-card-max-width), 100%);
+  margin: 0 auto;
+  padding: 0 var(--dsh-composer-side-clearance);
+  box-sizing: border-box;
+}
+
+.operator,
+.eduai {
+  display: flex;
+  flex-direction: column;
+  max-width: min(78%, 680px);
+}
+
+.operator {
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.eduai {
+  margin-right: auto;
+  align-items: flex-start;
+}
+
+.bubble {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 16px;
+  padding: 10px 14px;
+  background: var(--dsh-color-fill-secondary, rgba(255, 255, 255, 0.08));
+}
+
+.operator .bubble {
+  background: var(--dsh-color-fill-accent, #4d63a8);
+}
+
+.label {
+  margin: 4px 4px 0;
+  color: var(--dsh-color-text-tertiary, #9ca0a8);
+  font-size: 12px;
+}

@@ -33,6 +33,34 @@ async function submitOperatorResponse(response: Response) {
 }
 
 describe('EduAI operator browser route', () => {
+  it('hydrates persisted operator turns before the first textbox submission without duplicates', async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = requestPath(input)
+      if (path === '/api/eduai/operator-session') return Response.json({ established: true }, { status: 201 })
+      if (path === '/api/eduai/operator-transcript?taskId=42') return Response.json({
+        task_id: '42', harness_session_id: 'hss_hydrated', entries: [
+          { turn_id: 'hst_1', run_id: 'hrn_1', message: 'Print spider.', created_at: '2026-09-15T13:00:00Z', status: 'needs_human_review', summary: 'Printed spider.', error: null },
+          { turn_id: 'hst_2', run_id: 'hrn_2', message: 'Print pig.', created_at: '2026-09-15T13:01:00Z', status: 'completed', summary: 'Printed pig.', error: null },
+        ],
+      })
+      return Response.json({ run: { status: 'completed', result: { summary: 'Printed fox.' } } }, { status: 202 })
+    })
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_hydrated&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    await route.initialize()
+
+    expect(EduAiOperatorRoute.entries('hss_hydrated' as EduAiSessionId).map(entry => entry.text)).toEqual([
+      'Print spider.', 'EduAI\nPrinted spider.\nStatus: needs_human_review',
+      'Print pig.', 'EduAI\nPrinted pig.\nStatus: completed',
+    ])
+    await route.send('Print fox.', new AbortController().signal)
+    expect(EduAiOperatorRoute.entries('hss_hydrated' as EduAiSessionId)).toHaveLength(6)
+    expect(fetch).toHaveBeenCalledWith('/api/eduai/operator-transcript?taskId=42', expect.anything())
+  })
+
   it('coalesces duplicate textbox dispatches into one operator-message POST', async () => {
     let resolveResponse!: (response: Response) => void
     const fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
@@ -144,6 +172,34 @@ describe('EduAI operator browser route', () => {
     ])
   })
 
+  it('releases the composer processing state before publishing a terminal EduAI entry', async () => {
+    let resolveMessage!: (response: Response) => void
+    const fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
+      ? Promise.resolve(Response.json({ established: true }, { status: 201 }))
+      : new Promise<Response>((resolve) => { resolveMessage = resolve }))
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const terminalProcessingStates: boolean[] = []
+    const unsubscribe = EduAiOperatorRoute.subscribe('hss_owned' as EduAiSessionId, () => {
+      const entries = EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)
+      if (entries.at(-1)?.role === 'eduai' && entries.at(-1)?.pending !== true) {
+        terminalProcessingStates.push(EduAiOperatorRoute.isProcessing('hss_owned' as EduAiSessionId))
+      }
+    })
+
+    const pending = route.send('Apply the correction.', new AbortController().signal)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    resolveMessage(Response.json({ run: { status: 'needs_human_review', result: { summary: 'Ready.' } } }, { status: 202 }))
+
+    await expect(pending).resolves.toMatchObject({ kind: 'success' })
+    unsubscribe()
+    expect(terminalProcessingStates).toEqual([false])
+    expect(route.isProcessing()).toBe(false)
+  })
+
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
     const originalFetch = globalThis.fetch
     const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
@@ -164,7 +220,7 @@ describe('EduAI operator browser route', () => {
         { sessionId: 'hss_owned' }, 'Submit through the textbox.', [], 'queue', new AbortController().signal,
       )
 
-      expect(result).toEqual({ kind: 'success', text: 'EduAI\nLate capture was delivered.\nStatus: needs_human_review' })
+      expect(result).toEqual({ kind: 'success' })
       expect(fetch).toHaveBeenCalledTimes(2)
       expect(nativeSend).not.toHaveBeenCalled()
     } finally {
@@ -192,7 +248,7 @@ describe('EduAI operator browser route', () => {
       new AbortController().signal,
     )
 
-    expect(result).toEqual({ kind: 'success', text: 'EduAI\nCorrected rubric is ready.\nStatus: needs_human_review' })
+    expect(result).toEqual({ kind: 'success' })
     expect(replaceState).toHaveBeenCalledExactlyOnceWith(null, '', '/?sessionId=hss_owned&eduaiTaskId=42')
     expect(fetch).toHaveBeenCalledTimes(2)
     const [bootstrapPath, bootstrapOptions] = fetch.mock.calls[0] as unknown as [string, RequestInit]

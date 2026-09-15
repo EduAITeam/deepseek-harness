@@ -192,7 +192,12 @@ export class InputHub implements SessionInputResolver {
       if (attachmentIds.length > 0) {
         return Promise.resolve({ kind: 'error', text: 'EduAI operator messages do not support attachments.' })
       }
-      return eduAiRoute.send(text, signal)
+      return eduAiRoute.send(text, signal).then((outcome) => {
+        // The terminal result is rendered by the EduAI transcript.  Returning
+        // its text through the generic input machine would render the same
+        // successful result again as an informational composer notice.
+        return outcome.kind === 'success' ? { kind: 'success' } : outcome
+      })
     }
     return this.conversation().sendSession(session, text, attachmentIds, mode, signal)
   }

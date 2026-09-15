@@ -9,6 +9,7 @@ import type {
 } from '../contract/slots.ts'
 import { conversationPhase } from '../contract/snapshot.ts'
 import { resolveActiveView } from '../view-selection.ts'
+import { EduAiTranscript } from './EduAiTranscript.tsx'
 import css from './ConversationRoot.module.css'
 
 /** Full props composed from the strict session body contract. */
@@ -166,7 +167,7 @@ export function ConversationSessionHeader({
  * @returns the active view area, or null while the Session remains blank.
  */
 export function ConversationSession({
-  useSession, useConversation, useConversationViews, useInput, inputActions, useStore, actions,
+  sessionId, useSession, useConversation, useConversationViews, useInput, inputActions, useStore, actions,
   renderSlot, bindDraftMirror, openView,
 }: ConversationSessionProps) {
   const tabs = useConversationViews(value => value)
@@ -194,6 +195,7 @@ export function ConversationSession({
         openView,
         completeViewRequest: actions.completeViewRequest,
       }, { only: active.id })}
+      {active?.id === 'chat' && <EduAiTranscript sessionId={sessionId} />}
     </div>
   )
 }

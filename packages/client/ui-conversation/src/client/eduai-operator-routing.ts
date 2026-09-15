@@ -10,12 +10,15 @@ interface CapturedEduAiOperatorRoute {
 }
 
 interface EduAiRunSnapshot {
+  runId?: unknown
   status?: unknown
   result?: { summary?: unknown } | null
   error?: unknown
 }
 
 export interface EduAiTranscriptEntry {
+  readonly id?: string
+  readonly runId?: string
   readonly role: 'operator' | 'eduai'
   readonly text: string
   readonly pending?: boolean
@@ -31,6 +34,7 @@ export class EduAiOperatorRoute {
   private static readonly processingSessions = new Set<SessionId>()
   private readonly inFlight = new Map<string, Promise<SubmitOutcome>>()
   private active: Promise<SubmitOutcome> | undefined
+  private initialization: Promise<void> | undefined
 
   private constructor(
     private readonly taskId: number,
@@ -46,6 +50,11 @@ export class EduAiOperatorRoute {
     EduAiOperatorRoute.ownedSessionId = captured.sessionId
     EduAiOperatorRoute.transcript.delete(captured.sessionId)
     return new EduAiOperatorRoute(captured.taskId, captured.sessionId, captured.capability, sendFetch)
+  }
+
+  initialize(): Promise<void> {
+    this.initialization ??= this.hydrate()
+    return this.initialization
   }
 
   appliesTo(sessionId: SessionId): boolean { return sessionId === this.sessionId }
@@ -85,20 +94,24 @@ export class EduAiOperatorRoute {
     EduAiOperatorRoute.publish(this.sessionId)
     this.inFlight.set(text, pending)
     void pending.then((outcome) => {
-      EduAiOperatorRoute.replacePending(this.sessionId, outcome.text ?? 'EduAI operator message could not be delivered.')
-    }).finally(() => {
+      // Publish a terminal transcript only after releasing this request's
+      // active state.  InputBar reads that state to decide whether its
+      // authoritative session is writable; publishing the completed result
+      // first exposed one render where the result was visible but the composer
+      // still reported "Session unavailable".
       this.inFlight.delete(text)
       if (this.active === pending) {
         this.active = undefined
         EduAiOperatorRoute.processingSessions.delete(this.sessionId)
-        EduAiOperatorRoute.publish(this.sessionId)
       }
+      EduAiOperatorRoute.replacePending(this.sessionId, outcome.text ?? 'EduAI operator message could not be delivered.')
     })
     return pending
   }
 
   private async sendOnce(text: string, signal: AbortSignal): Promise<SubmitOutcome> {
     try {
+      if (this.initialization !== undefined) await this.initialization
       if (!(await this.establishSession(signal))) return { kind: 'error', text: 'EduAI operator capability is unavailable. Reopen this task from EduAI.' }
       const response = await this.sendFetch('/api/eduai/operator-message', {
         method: 'POST',
@@ -117,6 +130,29 @@ export class EduAiOperatorRoute {
       return { kind: 'success', text: `EduAI\n${detail}\nStatus: ${payload.run.status}` }
     } catch {
       return { kind: 'error', text: 'EduAI operator message could not be delivered.' }
+    }
+  }
+
+  private async hydrate(): Promise<void> {
+    try {
+      if (!(await this.establishSession(new AbortController().signal))) return
+      const response = await this.sendFetch(`/api/eduai/operator-transcript?taskId=${this.taskId}`, {
+        method: 'GET',
+        signal: new AbortController().signal,
+      })
+      if (!response.ok) return
+      const payload = await response.json() as { task_id?: unknown; harness_session_id?: unknown; entries?: unknown }
+      if (payload.task_id !== `${this.taskId}` || payload.harness_session_id !== this.sessionId || !Array.isArray(payload.entries)) return
+      const hydrated = payload.entries.flatMap(entry => EduAiOperatorRoute.toHydratedEntries(entry))
+      if (hydrated.length === 0) return
+      const existing = EduAiOperatorRoute.entries(this.sessionId)
+      const known = new Set(existing.map(entry => entry.id).filter((id): id is string => id !== undefined))
+      const merged = [...existing, ...hydrated.filter(entry => entry.id === undefined || !known.has(entry.id))]
+      EduAiOperatorRoute.transcript.set(this.sessionId, merged)
+      EduAiOperatorRoute.publish(this.sessionId)
+    } catch {
+      // Authentication and transport failures remain fail-closed for sending;
+      // an unavailable history projection must not change that behavior.
     }
   }
 
@@ -152,6 +188,21 @@ export class EduAiOperatorRoute {
   private static append(sessionId: SessionId, entry: EduAiTranscriptEntry): void {
     EduAiOperatorRoute.transcript.set(sessionId, [...EduAiOperatorRoute.entries(sessionId), entry])
     EduAiOperatorRoute.publish(sessionId)
+  }
+
+  private static toHydratedEntries(value: unknown): readonly EduAiTranscriptEntry[] {
+    if (typeof value !== 'object' || value === null) return []
+    const entry = value as Record<string, unknown>
+    if (typeof entry.turn_id !== 'string' || typeof entry.run_id !== 'string'
+      || typeof entry.message !== 'string' || typeof entry.status !== 'string') return []
+    const detail = typeof entry.summary === 'string'
+      ? entry.summary
+      : typeof entry.error === 'string' ? entry.error : entry.status === 'queued' || entry.status === 'running'
+        ? 'Processing…' : 'No result was returned.'
+    return [
+      { id: entry.turn_id, runId: entry.run_id, role: 'operator', text: entry.message },
+      { id: `${entry.turn_id}:result`, runId: entry.run_id, role: 'eduai', text: `EduAI\n${detail}\nStatus: ${entry.status}`, pending: entry.status === 'queued' || entry.status === 'running' },
+    ]
   }
 
   private static replacePending(sessionId: SessionId, text: string): void {

@@ -286,9 +286,10 @@ describe('EduAI transcript snapshots', () => {
 
     expect(view.container.querySelector('[data-composer-input]')).not.toBeNull()
     await act(async () => { await route.send('Create the console app.', new AbortController().signal) })
-    expect(view.container.querySelector('[data-composer-input]')).not.toBeNull()
-    expect(view.getByText('Operator')).toBeTruthy()
-    expect(view.getByText(/Status: completed/)).toBeTruthy()
+    const input = view.container.querySelector<HTMLElement>('[data-composer-input]')
+    expect(input).not.toBeNull()
+    expect(editableOf(input!)).toBe(true)
+    expect(placeholderOf(view.container)).not.toBe('会话不可用')
   })
 })
 

@@ -23,6 +23,7 @@ import type { IConversation } from './service.ts'
 import { ComposerBlockRegistry } from './input/blocks.ts'
 import type { ComposerBlock } from './contract/composer-blocks.ts'
 import { InputHub } from './input/hub.ts'
+import { EduAiOperatorRoute } from './eduai-operator-routing.ts'
 import { ComposerSubmissionPolicy } from './input/submission-policy.ts'
 import { queueDockEntry } from './queue/QueueDock.tsx'
 import { EnterBehaviorRow } from './settings/EnterBehaviorRow.tsx'
@@ -194,7 +195,9 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     }
   }, 'ui-conversation: View selection')
 
-  const inputHub = new InputHub(ctx, t)
+  const eduAiRoute = EduAiOperatorRoute.fromLocation()
+  if (eduAiRoute !== undefined) void eduAiRoute.initialize()
+  const inputHub = new InputHub(ctx, t, eduAiRoute)
   const composerBlocks = new ComposerBlockRegistry()
 
   // Conversation assembly and input share the Session binding lifecycle. The

@@ -32,6 +32,8 @@ import type {
   ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps,
 } from '../src/client/contract/slots.ts'
 import type { ViewTab } from '../src/client/contract/views.ts'
+import { EduAiOperatorRoute } from '../src/client/eduai-operator-routing.ts'
+import { captureEduAiOperatorRoute } from '../../ui-workspace/src/client/navigation.ts'
 
 // Every session-scope fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined })) as GlobalStandardProps['useResource']
@@ -581,6 +583,32 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.queryByTestId('view-new-view')).toBeNull()
     expect(b.view.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true')
     expect(b.view.getByRole('tab', { name: 'New view' }).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('renders an EduAI transcript only in Chat while preserving the native Trajectory view', async () => {
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: `?sessionId=${SID}&eduaiTaskId=42`, hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(async (input: RequestInfo | URL) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return path === '/api/eduai/operator-session'
+        ? Response.json({ established: true }, { status: 201 })
+        : Response.json({ run: { status: 'needs_human_review', result: { summary: 'Corrected output.' } } }, { status: 202 })
+    })!
+    await act(async () => { await route.send('Keep this transcript.', new AbortController().signal) })
+
+    const b = mount(sessionSnapshotOf())
+    expect(b.view.getByTestId('view-chat')).toBeTruthy()
+    expect(b.view.container.querySelector('[data-eduai-transcript]')).toBeTruthy()
+
+    act(() => { b.store.actions.setView('trajectory') })
+    expect(b.view.getByTestId('view-trajectory')).toBeTruthy()
+    expect(b.view.container.querySelector('[data-eduai-transcript]')).toBeNull()
+
+    act(() => { b.store.actions.setView('chat') })
+    expect(b.view.getByTestId('view-chat')).toBeTruthy()
+    expect(b.view.container.querySelector('[data-eduai-transcript]')?.textContent).toContain('Keep this transcript.')
   })
 
   it('rolls the pending workspace label back when switching fails', async () => {

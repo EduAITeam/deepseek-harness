@@ -13,7 +13,7 @@
  * trigger instead of a parallel tree.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
@@ -60,11 +60,6 @@ export const InputBar = memo(function InputBar({
   const subagent = useSession(s => s.subagent) ?? null
   const eduAiOwned = EduAiOperatorRoute.ownsSession(sessionId)
   const eduAiProcessing = EduAiOperatorRoute.isProcessing(sessionId)
-  const eduAiTranscript = useSyncExternalStore(
-    listener => EduAiOperatorRoute.subscribe(sessionId, listener),
-    () => EduAiOperatorRoute.entries(sessionId),
-    () => EduAiOperatorRoute.entries(undefined),
-  )
   const removed = useSession(s => s.removed) ?? false
   // Plan mode swaps the composer placeholder (the projection is the folded
   // host value; owner-prop placeholders — hero, session-unavailable — win).
@@ -424,11 +419,6 @@ export const InputBar = memo(function InputBar({
       {notice?.level === 'info' && (
         <div className={css.notice} role="status">
           {notice.text}
-        </div>
-      )}
-      {eduAiOwned && eduAiTranscript.length > 0 && (
-        <div className={css.notice} aria-live="polite">
-          {eduAiTranscript.map((entry, index) => <div key={`${entry.role}-${index}`}><strong>{entry.role === 'operator' ? 'Operator' : 'EduAI'}</strong><br />{entry.text}</div>)}
         </div>
       )}
       {/* Trigger clicks land on the card, not the editor: the toolbar row's
