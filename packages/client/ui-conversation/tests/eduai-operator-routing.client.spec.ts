@@ -13,10 +13,16 @@ type TestableInputHub = {
   ): Promise<{ kind: string }>
 }
 
+function requestPath(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.toString()
+  return input.url
+}
+
 describe('EduAI operator browser route', () => {
   it('coalesces duplicate textbox dispatches into one operator-message POST', async () => {
     let resolveResponse!: (response: Response) => void
-    const fetch = vi.fn((path: string) => path === '/api/eduai/operator-session'
+    const fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
       ? Promise.resolve(Response.json({ established: true }, { status: 201 }))
       : new Promise<Response>((resolve) => { resolveResponse = resolve }))
     captureEduAiOperatorRoute(
@@ -44,7 +50,7 @@ describe('EduAI operator browser route', () => {
   })
 
   it('does not retry an initial operator-message failure', async () => {
-    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
       ? Response.json({ established: true }, { status: 201 }) : Response.json({ error: 'conflict' }, { status: 409 }))
     captureEduAiOperatorRoute(
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
@@ -59,7 +65,7 @@ describe('EduAI operator browser route', () => {
 
   it('routes the actual InputHub submit when navigation captures the deep link after hub construction', async () => {
     const originalFetch = globalThis.fetch
-    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
       ? Response.json({ established: true }, { status: 201 }) : Response.json({ run: {
         runId: 'hrn_5', taskId: '42', sessionId: 'hss_owned',
         status: 'needs_human_review', result: { summary: 'Late capture was delivered.' }, error: null,
@@ -86,7 +92,7 @@ describe('EduAI operator browser route', () => {
   })
 
   it('captures an EduAI deep link before URL cleanup and routes the later InputHub through EduAI', async () => {
-    const fetch = vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
       ? Response.json({ established: true }, { status: 201 })
       : Response.json({ run: { status: 'needs_human_review', result: { summary: 'Corrected rubric is ready.' }, error: null } }, { status: 202 }))
     const replaceState = vi.fn()
@@ -163,7 +169,7 @@ describe('EduAI operator browser route', () => {
       { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
       { state: null, replaceState: vi.fn() } as unknown as History,
     )
-    const route = EduAiOperatorRoute.fromLocation(vi.fn(async (path: string) => path === '/api/eduai/operator-session'
+    const route = EduAiOperatorRoute.fromLocation(vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
       ? Response.json({ established: true }, { status: 201 })
       : Response.json({ run: { status: 'failed', result: null, error: 'executor_failed' } }, { status: 422 })))!
     const nativeSend = vi.fn()
@@ -180,10 +186,10 @@ describe('EduAI operator browser route', () => {
   it('calls the browser fetch with the browser global as its receiver', async () => {
     const originalFetch = globalThis.fetch
     const received = vi.fn()
-    globalThis.fetch = function (this: unknown, path: string): Promise<Response> {
+    globalThis.fetch = function (this: unknown, input: RequestInfo | URL, _init?: RequestInit): Promise<Response> {
       received(this)
       if (this !== globalThis) throw new TypeError('invalid fetch receiver')
-      return Promise.resolve(path === '/api/eduai/operator-session' ? Response.json({ established: true }, { status: 201 }) : Response.json({
+      return Promise.resolve(requestPath(input) === '/api/eduai/operator-session' ? Response.json({ established: true }, { status: 201 }) : Response.json({
         run: { status: 'completed', result: { summary: 'Done.' }, error: null },
       }, { status: 202 }))
     }
