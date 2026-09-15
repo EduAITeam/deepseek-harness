@@ -15,7 +15,7 @@ export function EduAiTranscript({ sessionId }: { readonly sessionId: SessionId }
     <div className={css.root} data-eduai-transcript>
       {entries.map((entry, index) => (
         <article
-          key={`${entry.role}-${index}`}
+          key={entry.id ?? `${entry.runId ?? 'local'}:${entry.role}:${index}`}
           className={entry.role === 'operator' ? css.operator : css.eduai}
           data-eduai-role={entry.role}
           data-eduai-align={entry.role === 'operator' ? 'right' : 'left'}
