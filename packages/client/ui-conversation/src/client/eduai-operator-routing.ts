@@ -21,6 +21,8 @@ export interface EduAiTranscriptEntry {
   readonly pending?: boolean
 }
 
+const EMPTY_TRANSCRIPT: readonly EduAiTranscriptEntry[] = Object.freeze([])
+
 /** Browser-only, in-memory route for the EduAI deep-link capability. */
 export class EduAiOperatorRoute {
   private static ownedSessionId: SessionId | undefined
@@ -56,7 +58,9 @@ export class EduAiOperatorRoute {
     return sessionId !== undefined && EduAiOperatorRoute.processingSessions.has(sessionId)
   }
   static entries(sessionId: SessionId | undefined): readonly EduAiTranscriptEntry[] {
-    return sessionId === undefined ? [] : EduAiOperatorRoute.transcript.get(sessionId) ?? []
+    return sessionId === undefined
+      ? EMPTY_TRANSCRIPT
+      : EduAiOperatorRoute.transcript.get(sessionId) ?? EMPTY_TRANSCRIPT
   }
   static subscribe(sessionId: SessionId | undefined, listener: () => void): () => void {
     if (sessionId === undefined) return () => {}

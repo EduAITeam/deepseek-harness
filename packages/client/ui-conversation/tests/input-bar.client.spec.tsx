@@ -30,6 +30,8 @@ import type {
 import type { DraftAttachmentId } from '../src/client/contract/input.ts'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
+import { EduAiOperatorRoute } from '../src/client/eduai-operator-routing.ts'
+import { captureEduAiOperatorRoute } from '../../ui-workspace/src/client/navigation.ts'
 import { zh } from '../src/client/locales.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
@@ -52,6 +54,7 @@ function snapshotOf(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
 }
 
 interface BenchOptions {
+  sessionId?: SessionId
   planEntry?: React.ReactNode
   /** The `plan` projection value the standard-kit useProjection serves. */
   plan?: { active: boolean; pending: boolean }
@@ -165,7 +168,7 @@ function bench(over?: BenchOptions) {
   }) as never
   const props: InputBarProps = {
     usePanelInfo: selector => selector({ activePanelId: null }),
-    sessionId: SID,
+    sessionId: over?.sessionId ?? SID,
     SessionProvider: ({ children }) => children,
     useSession: bindSnapshotSelector(session),
     useConversation: bindSnapshotSelector(createSnapshotStore(conversationFixture())),
@@ -264,6 +267,30 @@ function placeholderOf(container: HTMLElement): string {
 function editableOf(input: HTMLElement): boolean {
   return input.getAttribute('contenteditable') === 'true'
 }
+
+describe('EduAI transcript snapshots', () => {
+  it('keeps the composer mounted before and after the first transcript update', async () => {
+    const sessionId = 'hss_eduai_empty' as SessionId
+    const fetch: typeof globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return path === '/api/eduai/operator-session'
+        ? Response.json({ established: true }, { status: 201 })
+        : Response.json({ run: { status: 'completed', result: { summary: 'Done.' } } }, { status: 202 })
+    }
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: `?sessionId=${sessionId}&eduaiTaskId=42`, hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const { view } = bench({ sessionId })
+
+    expect(view.container.querySelector('[data-composer-input]')).not.toBeNull()
+    await act(async () => { await route.send('Create the console app.', new AbortController().signal) })
+    expect(view.container.querySelector('[data-composer-input]')).not.toBeNull()
+    expect(view.getByText('Operator')).toBeTruthy()
+    expect(view.getByText(/Status: completed/)).toBeTruthy()
+  })
+})
 
 /** Write the draft through the shell inside act (the seed path; caret lands at the end). */
 function writeDraft(shell: SessionInputShell, text: string): void {

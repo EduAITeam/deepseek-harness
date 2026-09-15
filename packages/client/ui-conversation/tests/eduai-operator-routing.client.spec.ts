@@ -96,7 +96,12 @@ describe('EduAI operator browser route', () => {
       { state: null, replaceState: vi.fn() } as unknown as History,
     )
     const route = EduAiOperatorRoute.fromLocation(fetch)!
+    const emptyTranscript = EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)
+    expect(emptyTranscript).toBe(EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId))
+    expect(emptyTranscript).toBe(EduAiOperatorRoute.entries(undefined))
+
     const pending = route.send('Create the console app.', new AbortController().signal)
+    expect(EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)).not.toBe(emptyTranscript)
     expect(EduAiOperatorRoute.entries('hss_owned' as EduAiSessionId)).toEqual([
       { role: 'operator', text: 'Create the console app.' },
       { role: 'eduai', text: 'Processing…', pending: true },

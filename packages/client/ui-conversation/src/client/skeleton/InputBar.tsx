@@ -63,7 +63,7 @@ export const InputBar = memo(function InputBar({
   const eduAiTranscript = useSyncExternalStore(
     listener => EduAiOperatorRoute.subscribe(sessionId, listener),
     () => EduAiOperatorRoute.entries(sessionId),
-    () => [],
+    () => EduAiOperatorRoute.entries(undefined),
   )
   const removed = useSession(s => s.removed) ?? false
   // Plan mode swaps the composer placeholder (the projection is the folded
