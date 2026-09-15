@@ -106,7 +106,7 @@ export class EduAiOperatorRoute {
         body: JSON.stringify({ taskId: this.taskId, message: text }),
         signal,
       })
-      if (response.status === 409) return { kind: 'error', text: 'EduAI is still processing the previous request.' }
+      if (response.status === 409) return { kind: 'error', text: await EduAiOperatorRoute.conflictText(response) }
       if (!response.ok) return { kind: 'error', text: 'EduAI operator message was not accepted.' }
       const payload = await response.json() as { run?: EduAiRunSnapshot }
       if (payload.run === undefined || typeof payload.run.status !== 'string') {
@@ -130,6 +130,23 @@ export class EduAiOperatorRoute {
     if (!response.ok) return false
     this.bootstrapCapability = undefined
     return true
+  }
+
+  private static async conflictText(response: Response): Promise<string> {
+    const payload: unknown = await response.json().catch(() => undefined)
+    const code = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
+      ? payload.error
+      : undefined
+    switch (code) {
+      case 'task_not_resumable':
+        return 'This task is not ready for operator correction. It must be moved to NeedsRework first.'
+      case 'task_session_conflict':
+        return 'This Harness session no longer matches the task. Reopen the task from EduAI.'
+      case 'task_state_conflict':
+        return 'The task state changed while the correction was being submitted. Reopen the task and try again.'
+      default:
+        return 'EduAI could not resume this task because its current state conflicts with the request.'
+    }
   }
 
   private static append(sessionId: SessionId, entry: EduAiTranscriptEntry): void {

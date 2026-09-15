@@ -21,6 +21,17 @@ function requestPath(input: RequestInfo | URL): string {
   return input.url
 }
 
+async function submitOperatorResponse(response: Response) {
+  const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
+    ? Response.json({ established: true }, { status: 201 }) : response)
+  captureEduAiOperatorRoute(
+    { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
+    { state: null, replaceState: vi.fn() } as unknown as History,
+  )
+  const outcome = await EduAiOperatorRoute.fromLocation(fetch)!.send('Submit once.', new AbortController().signal)
+  return { fetch, outcome }
+}
+
 describe('EduAI operator browser route', () => {
   it('coalesces duplicate textbox dispatches into one operator-message POST', async () => {
     let resolveResponse!: (response: Response) => void
@@ -51,18 +62,35 @@ describe('EduAI operator browser route', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry an initial operator-message failure', async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => requestPath(input) === '/api/eduai/operator-session'
-      ? Response.json({ established: true }, { status: 201 }) : Response.json({ error: 'conflict' }, { status: 409 }))
-    captureEduAiOperatorRoute(
-      { pathname: '/', search: '?sessionId=hss_owned&eduaiTaskId=42', hash: '#eduaiCapability=capability' } as Location,
-      { state: null, replaceState: vi.fn() } as unknown as History,
-    )
+  it('maps task_not_resumable conflicts to the NeedsRework guidance', async () => {
+    const { fetch, outcome } = await submitOperatorResponse(Response.json({ error: 'task_not_resumable' }, { status: 409 }))
 
-    const outcome = await EduAiOperatorRoute.fromLocation(fetch)!.send('Submit once.', new AbortController().signal)
-
-    expect(outcome).toEqual({ kind: 'error', text: 'EduAI is still processing the previous request.' })
+    expect(outcome).toEqual({ kind: 'error', text: 'This task is not ready for operator correction. It must be moved to NeedsRework first.' })
     expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps task_session_conflict to reopen-task guidance', async () => {
+    const { outcome } = await submitOperatorResponse(Response.json({ error: 'task_session_conflict' }, { status: 409 }))
+
+    expect(outcome).toEqual({ kind: 'error', text: 'This Harness session no longer matches the task. Reopen the task from EduAI.' })
+  })
+
+  it('maps task_state_conflict to retry guidance', async () => {
+    const { outcome } = await submitOperatorResponse(Response.json({ error: 'task_state_conflict' }, { status: 409 }))
+
+    expect(outcome).toEqual({ kind: 'error', text: 'The task state changed while the correction was being submitted. Reopen the task and try again.' })
+  })
+
+  it('maps unknown conflicts to generic conflict guidance', async () => {
+    const { outcome } = await submitOperatorResponse(Response.json({ error: 'other_conflict' }, { status: 409 }))
+
+    expect(outcome).toEqual({ kind: 'error', text: 'EduAI could not resume this task because its current state conflicts with the request.' })
+  })
+
+  it('maps malformed conflict responses to generic conflict guidance', async () => {
+    const { outcome } = await submitOperatorResponse(new Response('not json', { status: 409 }))
+
+    expect(outcome).toEqual({ kind: 'error', text: 'EduAI could not resume this task because its current state conflicts with the request.' })
   })
 
   it('blocks a distinct operator message while the accepted run is active', async () => {
