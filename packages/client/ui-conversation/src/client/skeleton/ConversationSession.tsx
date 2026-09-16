@@ -10,6 +10,7 @@ import type {
 import { conversationPhase } from '../contract/snapshot.ts'
 import { resolveActiveView } from '../view-selection.ts'
 import { EduAiTranscript } from './EduAiTranscript.tsx'
+import { EduAiOperatorRoute } from '../eduai-operator-routing.ts'
 import css from './ConversationRoot.module.css'
 
 /** Full props composed from the strict session body contract. */
@@ -187,7 +188,11 @@ export function ConversationSession({
     // the machine mirror, not this seed effect.
   }, [inputActions])
 
-  if (session.blank && conversationPhase(session, conversation) === 'blank') return null
+  // EduAI operator sessions keep their transcript outside the native Harness
+  // conversation event stream. They can therefore be blank from Harness'
+  // perspective while still having persisted EduAI history to render.
+  if (session.blank && conversationPhase(session, conversation) === 'blank'
+    && !EduAiOperatorRoute.ownsSession(sessionId)) return null
   return (
     <div className={css.viewArea}>
       {active !== undefined && renderSlot('conversation.view', {

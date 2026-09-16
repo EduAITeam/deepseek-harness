@@ -8,6 +8,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { ConversationSlotProps, InputZone } from '../contract/slots.ts'
 import { conversationPhase } from '../contract/snapshot.ts'
 import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
+import { EduAiOperatorRoute } from '../eduai-operator-routing.ts'
 import css from './ConversationRoot.module.css'
 
 /** Full props composed from the slot contract. */
@@ -134,6 +135,7 @@ export function ConversationRoot({
   renderSlot, renderSlotChain, selectWorkspace, t,
 }: ConversationRootProps) {
   const session = useSession(s => s)
+  const eduAiOwned = EduAiOperatorRoute.ownsSession(sessionId)
   const pendingInteraction = useSessionPendingInteraction(snapshot =>
     sessionId === undefined ? undefined : snapshot.get(sessionId))
   const conversation = useConversation(s => s)
@@ -270,7 +272,8 @@ export function ConversationRoot({
     || parentAvailabilityPending
   )
   const hero = sessionId === undefined
-    || (shellPhase === 'blank' && (openState === 'open' || summaryBlank === true))
+    || (eduAiOwned ? false
+      : shellPhase === 'blank' && (openState === 'open' || summaryBlank === true))
   const zone: InputZone | undefined =
     session === undefined || inputState === undefined ? undefined : { session, input: inputState }
 

@@ -611,6 +611,35 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.container.querySelector('[data-eduai-transcript]')?.textContent).toContain('Keep this transcript.')
   })
 
+  it('keeps a blank native session in the EduAI chat instead of showing the generic hero', async () => {
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: `?sessionId=${SID}&eduaiTaskId=42`, hash: '#eduaiCapability=capability' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    const route = EduAiOperatorRoute.fromLocation(async (input: RequestInfo | URL) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return path === '/api/eduai/operator-session'
+        ? Response.json({ established: true }, { status: 201 })
+        : Response.json({ run: { status: 'completed', result: { summary: 'Existing task history.' } } }, { status: 202 })
+    })!
+    await act(async () => { await route.send('Show the existing task.', new AbortController().signal) })
+
+    const b = mount(sessionSnapshotOf({ blank: true, openState: 'open' }), [{ ...workspace('one'), sessionIds: [SID] }], undefined, { summaryBlank: true })
+    expect(b.view.queryByTestId('hero-headline')).toBeNull()
+    expect(b.view.getByTestId('view-chat')).toBeTruthy()
+    expect(b.view.getByText('Show the existing task.')).toBeTruthy()
+    expect(b.view.getByText(/Existing task history\./u)).toBeTruthy()
+    expect(b.view.container.querySelector('[data-eduai-role="operator"]')).toBeTruthy()
+    expect(b.view.container.querySelector('[data-eduai-role="eduai"]')).toBeTruthy()
+
+    // Keep the module-level deep-link ownership from affecting later blank-session cases.
+    captureEduAiOperatorRoute(
+      { pathname: '/', search: '?sessionId=other&eduaiTaskId=43', hash: '' } as Location,
+      { state: null, replaceState: vi.fn() } as unknown as History,
+    )
+    EduAiOperatorRoute.fromLocation(() => Promise.resolve(Response.json({})))
+  })
+
   it('rolls the pending workspace label back when switching fails', async () => {
     const selectWorkspace = vi.fn(async () => { throw new Error('connect failed') })
     const b = mount(
