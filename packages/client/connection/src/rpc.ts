@@ -197,6 +197,9 @@ export interface HostConnectionHandle {
    * @returns root URL accepted by {@link authorizeIndex} for initial login.
    */
   authenticatedUrl(baseUrl: string): string
+
+  /** Mint a fresh single-use process token URL for an internal trusted handoff. */
+  mintAuthenticatedUrl(baseUrl: string): string
 }
 
 /** Transport-independent Fetch handler used by HTTP and worker carriers. */

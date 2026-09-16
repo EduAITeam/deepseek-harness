@@ -109,6 +109,10 @@ export class HostConnectionService extends Service implements HostConnectionHand
     return this.browserAuth.authenticatedUrl(baseUrl)
   }
 
+  mintAuthenticatedUrl(baseUrl: string): string {
+    return this.browserAuth.mintAuthenticatedUrl(baseUrl)
+  }
+
   /**
    * Compose one shared-channel Fetch handler from exact routes and its interceptor.
    * @param channel - shared channel mounted by Connection.

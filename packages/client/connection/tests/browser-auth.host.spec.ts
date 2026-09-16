@@ -140,6 +140,42 @@ describe('BrowserAuth', () => {
     })
   })
 
+  it('mints distinct single-use internal launch URLs and preserves the selected session', async () => {
+    const auth = await createAuth(new RecordCredentials())
+    const first = new URL(auth.mintAuthenticatedUrl('http://127.0.0.1:3080'))
+    const second = new URL(auth.mintAuthenticatedUrl('http://127.0.0.1:3080'))
+    expect(first.searchParams.get('token')).not.toBe(second.searchParams.get('token'))
+
+    const firstResponse = response()
+    expect(auth.authorizeIndex(request(`${first.pathname}${first.search}&sessionId=existing`), firstResponse.value)).toBe(false)
+    expect(firstResponse.state.status).toBe(303)
+    expect(firstResponse.state.headers?.location).toBe('/?sessionId=existing')
+
+    const replay = response()
+    expect(auth.authorizeIndex(request(`${first.pathname}${first.search}`), replay.value)).toBe(false)
+    expect(replay.state.status).toBe(401)
+
+    const secondResponse = response()
+    expect(auth.authorizeIndex(request(`${second.pathname}${second.search}`), secondResponse.value)).toBe(false)
+    expect(secondResponse.state.status).toBe(303)
+  })
+
+  it('rejects expired dynamic launch URLs and lazily ignores them', async () => {
+    vi.useFakeTimers()
+    const auth = await createAuth(new RecordCredentials())
+    const expired = new URL(auth.mintAuthenticatedUrl('http://127.0.0.1:3080'))
+    vi.advanceTimersByTime(2 * 60 * 1000 + 1)
+
+    const rejected = response()
+    expect(auth.authorizeIndex(request(`${expired.pathname}${expired.search}`), rejected.value)).toBe(false)
+    expect(rejected.state.status).toBe(401)
+
+    const fresh = new URL(auth.mintAuthenticatedUrl('http://127.0.0.1:3080'))
+    const accepted = response()
+    expect(auth.authorizeIndex(request(`${fresh.pathname}${fresh.search}`), accepted.value)).toBe(false)
+    expect(accepted.state.status).toBe(303)
+  })
+
   it('accepts the cookie for index serving and gives every unauthenticated request one response', async () => {
     const auth = await createAuth(new RecordCredentials())
     const { cookie } = exchange(auth)

@@ -11,6 +11,7 @@ import type {
 
 const AUTH_RECORD_KEY = credentialKey('client-connection', 'browser-session')
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000
+const DYNAMIC_TOKEN_MAX_AGE_MILLISECONDS = 2 * 60 * 1000
 const SECRET_BYTES = 32
 const TOKEN_QUERY = 'token'
 const COOKIE_PREFIX = 'dsh-auth-'
@@ -184,6 +185,7 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
  */
 export class BrowserAuth {
   private readonly launchToken: string
+  private readonly pendingLaunchTokens = new Map<string, number>()
   private readonly maxAgeMilliseconds: number
 
   private constructor(
@@ -229,6 +231,20 @@ export class BrowserAuth {
     return url.href
   }
 
+  /** Mint a fresh single-use process launch URL for an internal handoff. */
+  mintAuthenticatedUrl(baseUrl: string): string {
+    const token = encodeBase64Url(randomBytes(SECRET_BYTES))
+    const now = Date.now()
+    this.removeExpiredLaunchTokens(now)
+    this.pendingLaunchTokens.set(token, now + DYNAMIC_TOKEN_MAX_AGE_MILLISECONDS)
+    const url = new URL(baseUrl)
+    url.pathname = '/'
+    url.search = ''
+    url.hash = ''
+    url.searchParams.set(TOKEN_QUERY, token)
+    return url.href
+  }
+
   /**
    * Authenticate an index request. A valid root query token mints the cookie
    * and redirects to clean `/`; a valid cookie lets the caller serve the
@@ -242,10 +258,19 @@ export class BrowserAuth {
     const url = new URL(req.url ?? '/', 'http://dsh.invalid')
     const tokens = url.searchParams.getAll(TOKEN_QUERY)
     if (tokens.length > 0) {
+      const now = Date.now()
+      this.removeExpiredLaunchTokens(now)
       const authority = requestAuthority(req.headers)
-      if (req.method === 'GET' && url.pathname === '/' && tokens.length === 1
-        && authority !== undefined && tokenMatches(tokens.join(''), this.launchToken)) {
-        const issuedAt = Date.now()
+      const providedToken = tokens.length === 1 ? tokens[0] : undefined
+      const processTokenMatched = providedToken !== undefined
+        && tokenMatches(providedToken, this.launchToken)
+      const dynamicToken = providedToken === undefined
+        ? undefined
+        : [...this.pendingLaunchTokens.keys()].find(candidate => tokenMatches(providedToken, candidate))
+      if (req.method === 'GET' && url.pathname === '/' && (processTokenMatched || dynamicToken !== undefined)
+        && authority !== undefined) {
+        if (dynamicToken !== undefined) this.pendingLaunchTokens.delete(dynamicToken)
+        const issuedAt = now
         const expiresAt = issuedAt + this.maxAgeMilliseconds
         const value = encodeCookie({
           version: COOKIE_PAYLOAD_VERSION,
@@ -253,9 +278,12 @@ export class BrowserAuth {
           issuedAt,
           expiresAt,
         }, this.secret)
+        const redirectQuery = new URLSearchParams(url.search)
+        redirectQuery.delete(TOKEN_QUERY)
+        const location = redirectQuery.size === 0 ? '/' : `/?${redirectQuery.toString()}`
         res.writeHead(303, {
           'cache-control': 'no-store',
-          'location': '/',
+          'location': location,
           'referrer-policy': 'no-referrer',
           'set-cookie': sessionCookie(
             cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
@@ -279,6 +307,12 @@ export class BrowserAuth {
     if (this.isAuthenticated(req)) return true
     this.writeUnauthorized(req, res)
     return false
+  }
+
+  private removeExpiredLaunchTokens(now: number): void {
+    for (const [token, expiresAt] of this.pendingLaunchTokens) {
+      if (expiresAt <= now) this.pendingLaunchTokens.delete(token)
+    }
   }
 
   /**
