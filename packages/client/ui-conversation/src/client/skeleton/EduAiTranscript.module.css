@@ -12,20 +12,25 @@
 .eduai {
   display: flex;
   flex-direction: column;
+  align-self: flex-start;
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 0;
   max-width: min(78%, 680px);
 }
 
 .operator {
-  margin-left: auto;
+  align-self: flex-end;
   align-items: flex-end;
 }
 
 .eduai {
-  margin-right: auto;
   align-items: flex-start;
 }
 
 .bubble {
+  box-sizing: border-box;
+  max-width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   border-radius: 16px;
